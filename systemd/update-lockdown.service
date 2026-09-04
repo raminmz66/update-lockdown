@@ -1,0 +1,15 @@
+[Unit]
+Description=Re-apply update lockdown
+Documentation=https://github.com/raminmz66/update-lockdown
+After=snapd.service
+Wants=snapd.service
+# Nothing to do unless the machine is actually locked down.
+ConditionPathExists=/var/lib/update-lockdown/state.tsv
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/update-lockdown enforce --quiet
+
+[Install]
+WantedBy=multi-user.target

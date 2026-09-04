@@ -232,5 +232,39 @@ ul status >/dev/null 2>&1; assert_eq "apt drift exits 2" "$?" "2"
 out="$(ul status)"; assert_contains "drift suggests enforce" "$out" "enforce"
 teardown
 
+echo "== Task 9: enforce =="
+setup
+ul lock >/dev/null 2>&1
+sum1="$(cksum < "$UL_STATE_DIR/state.tsv")"
+rm -f "$UL_APT_CONF_DIR/99-update-lockdown"
+: > "$UL_FAKE_SNAP_HOLD"
+: > "$UL_FAKE_LOG"
+ul enforce >/dev/null 2>&1; assert_eq "enforce exits 0" "$?" "0"
+assert_eq "enforce never rewrites the state file" "$(cksum < "$UL_STATE_DIR/state.tsv")" "$sum1"
+calls="$(cat "$UL_FAKE_LOG")"
+assert_contains "enforce re-masks units"   "$calls" "systemctl mask apt-daily.timer"
+assert_contains "enforce re-holds snap"    "$calls" "snap set system refresh.hold=forever"
+assert_eq "enforce rewrites the dropin" "$(exists "$UL_APT_CONF_DIR/99-update-lockdown")" "yes"
+teardown
+
+echo "== Task 9b: enforce without a lock is a no-op =="
+setup
+ul enforce >/dev/null 2>&1; assert_eq "enforce exits 0 when unlocked" "$?" "0"
+calls="$(cat "$UL_FAKE_LOG")"
+assert_absent "enforce masks nothing when unlocked" "$calls" "systemctl mask"
+assert_absent "enforce holds nothing when unlocked" "$calls" "snap set"
+assert_eq "enforce creates no state file" "$(exists "$UL_STATE_DIR/state.tsv")" "no"
+teardown
+
+echo "== Task 9c: enforce leaves an intact lockdown alone =="
+setup
+ul lock >/dev/null 2>&1
+sed -i "s/${T}enabled${T}/${T}masked${T}/; s/${T}static${T}/${T}masked${T}/" "$UL_FAKE_STATE"
+: > "$UL_FAKE_LOG"
+ul enforce >/dev/null 2>&1
+assert_absent "already-masked units are skipped" "$(cat "$UL_FAKE_LOG")" "systemctl mask apt-daily.timer"
+ul status >/dev/null 2>&1; assert_eq "still clean after enforce" "$?" "0"
+teardown
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

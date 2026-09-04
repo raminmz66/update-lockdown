@@ -169,6 +169,11 @@ freeze_units_from_state() {
       not-found) continue ;;
       masked)    log "  $name was already masked - leaving it"; continue ;;
     esac
+    # Already frozen: nothing to do. This makes `enforce` a true no-op at
+    # boot when nothing has drifted, rather than re-stopping every unit.
+    if [ "$(unit_enabled_state "$name")" = "masked" ]; then
+      continue
+    fi
     log "  freezing $name (was $prior/$active)"
     try systemctl stop "$name" || true
     # `systemctl disable` errors on a static unit, so only call it when the
@@ -369,7 +374,24 @@ cmd_status() {
   printf '\nAll managed items are frozen. Manual apt/snap commands still work.\n'
   return 0
 }
-cmd_enforce() { die "not implemented"; }
+# Re-applies the frozen target for everything named in the state file, and
+# never writes to the state file. Masks already survive a reboot on their own;
+# this closes the gap where a package upgrade or a manual `systemctl unmask`
+# reopens a channel between boots.
+cmd_enforce() {
+  need_root enforce
+  if ! is_locked; then
+    log "not locked - nothing to enforce."
+    return 0
+  fi
+  log "re-applying lockdown from $STATE_FILE"
+  freeze_units_from_state
+  freeze_apt
+  freeze_snap
+  try systemctl daemon-reload || true
+  [ "$FAILED" -eq 0 ] || die "$FAILED operation(s) failed"
+  log "lockdown enforced."
+}
 
 main() {
   local args=()
