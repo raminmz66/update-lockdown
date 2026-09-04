@@ -180,6 +180,49 @@ freeze_units_from_state() {
   done < <(state_each_unit)
 }
 
+# The drop-in sorts last in apt.conf.d, so it wins without 10periodic ever
+# being modified. That is what makes the exact-restore promise cheap for apt.
+freeze_apt() {
+  local target="$UL_APT_CONF_DIR/$APT_DROPIN"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "  dry-run: would write $target"
+    return 0
+  fi
+  if [ -e "$target" ] && [ "$(state_field aptconf "$APT_DROPIN" || true)" = "present" ]; then
+    mkdir -p "$BACKUP_DIR"
+    cp -a "$target" "$BACKUP_DIR/$APT_DROPIN"
+    log "  backed up the pre-existing $APT_DROPIN"
+  fi
+  log "  writing $target"
+  mkdir -p "$UL_APT_CONF_DIR"
+  cat > "$target" <<'APTCONF'
+// Written by update-lockdown. Removed automatically by `update-lockdown unlock`.
+APT::Periodic::Enable "0";
+APT::Periodic::Update-Package-Lists "0";
+APT::Periodic::Download-Upgradeable-Packages "0";
+APT::Periodic::Unattended-Upgrade "0";
+APT::Periodic::AutocleanInterval "0";
+APTCONF
+  chmod 644 "$target"
+}
+
+restore_apt() {
+  local target="$UL_APT_CONF_DIR/$APT_DROPIN"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "  dry-run: would remove $target"
+    return 0
+  fi
+  rm -f "$target"
+  if [ "$(state_field aptconf "$APT_DROPIN" || true)" = "present" ] && [ -e "$BACKUP_DIR/$APT_DROPIN" ]; then
+    cp -a "$BACKUP_DIR/$APT_DROPIN" "$target"
+    rm -f "$BACKUP_DIR/$APT_DROPIN"
+    rmdir "$BACKUP_DIR" 2>/dev/null || true
+    log "  restored the original $APT_DROPIN"
+  else
+    log "  removed $target"
+  fi
+}
+
 # --------------------------------------------------------------- restore ----
 
 restore_units_from_state() {
@@ -222,6 +265,7 @@ cmd_lock() {
   state_write
   log "snapshot written to $STATE_FILE"
   freeze_units_from_state
+  freeze_apt
   try systemctl daemon-reload || true
   [ "$FAILED" -eq 0 ] || die "$FAILED operation(s) failed"
   log ""
@@ -238,6 +282,7 @@ cmd_unlock() {
     return 0
   fi
   restore_units_from_state
+  restore_apt
   try systemctl daemon-reload || true
   if [ "$FAILED" -ne 0 ]; then
     die "$FAILED operation(s) failed - snapshot kept, re-run 'update-lockdown unlock'"

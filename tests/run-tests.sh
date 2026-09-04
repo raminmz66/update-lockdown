@@ -113,5 +113,28 @@ assert_absent "pre-masked unit stays masked"  "$calls" "systemctl unmask fwupd-r
 assert_absent "absent unit is skipped"        "$calls" "systemctl unmask motd-news.timer"
 teardown
 
+echo "== Task 5: apt drop-in =="
+setup
+printf 'APT::Periodic::Update-Package-Lists "0";\n' > "$UL_APT_CONF_DIR/10periodic"
+before="$(cat "$UL_APT_CONF_DIR/10periodic")"
+ul lock >/dev/null 2>&1
+assert_eq "dropin created" "$(exists "$UL_APT_CONF_DIR/99-update-lockdown")" "yes"
+assert_contains "dropin disables periodic" "$(cat "$UL_APT_CONF_DIR/99-update-lockdown")" 'APT::Periodic::Enable "0";'
+assert_eq "10periodic left untouched" "$(cat "$UL_APT_CONF_DIR/10periodic")" "$before"
+ul unlock >/dev/null 2>&1
+assert_eq "dropin removed on unlock" "$(exists "$UL_APT_CONF_DIR/99-update-lockdown")" "no"
+assert_eq "10periodic still untouched" "$(cat "$UL_APT_CONF_DIR/10periodic")" "$before"
+teardown
+
+echo "== Task 5b: pre-existing drop-in is preserved =="
+setup
+printf 'pre-existing content\n' > "$UL_APT_CONF_DIR/99-update-lockdown"
+ul lock >/dev/null 2>&1
+assert_contains "lock records it as present" "$(cat "$UL_STATE_DIR/state.tsv")" "aptconf${T}99-update-lockdown${T}present"
+assert_contains "lock overwrote it" "$(cat "$UL_APT_CONF_DIR/99-update-lockdown")" 'APT::Periodic::Enable "0";'
+ul unlock >/dev/null 2>&1
+assert_eq "unlock restores the original" "$(cat "$UL_APT_CONF_DIR/99-update-lockdown")" "pre-existing content"
+teardown
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
