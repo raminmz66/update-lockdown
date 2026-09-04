@@ -136,5 +136,27 @@ ul unlock >/dev/null 2>&1
 assert_eq "unlock restores the original" "$(cat "$UL_APT_CONF_DIR/99-update-lockdown")" "pre-existing content"
 teardown
 
+echo "== Task 6: snapd hold =="
+setup
+ul lock >/dev/null 2>&1
+calls="$(cat "$UL_FAKE_LOG")"
+assert_contains "sets hold to forever" "$calls" "snap set system refresh.hold=forever"
+assert_eq "hold value applied" "$(cat "$UL_FAKE_SNAP_HOLD")" "forever"
+assert_absent "never uses 'snap refresh --hold'" "$calls" "snap refresh --hold"
+ul unlock >/dev/null 2>&1
+assert_contains "unsets hold when it was unset" "$(cat "$UL_FAKE_LOG")" "snap unset system refresh.hold"
+assert_eq "hold cleared" "$(cat "$UL_FAKE_SNAP_HOLD")" ""
+teardown
+
+echo "== Task 6b: a pre-existing hold round-trips =="
+setup
+printf '2030-01-01T00:00:00Z' > "$UL_FAKE_SNAP_HOLD"
+ul lock >/dev/null 2>&1
+assert_contains "prior hold snapshotted" "$(cat "$UL_STATE_DIR/state.tsv")" "snap${T}refresh.hold${T}2030-01-01T00:00:00Z"
+assert_eq "lock still applies forever" "$(cat "$UL_FAKE_SNAP_HOLD")" "forever"
+ul unlock >/dev/null 2>&1
+assert_eq "prior hold value restored" "$(cat "$UL_FAKE_SNAP_HOLD")" "2030-01-01T00:00:00Z"
+teardown
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

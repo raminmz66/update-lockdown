@@ -223,6 +223,31 @@ restore_apt() {
   fi
 }
 
+# refresh.hold holds *automatic* refreshes only, so a manual `snap refresh`
+# keeps working. `snap refresh --hold` would block manual refreshes too, which
+# is why it is not used here. refresh.hold=forever needs snapd >= 2.58.
+freeze_snap() {
+  if ! command -v snap >/dev/null 2>&1; then
+    log "  snapd not present - skipping"
+    return 0
+  fi
+  log "  holding snap auto-refresh (manual 'snap refresh' still works)"
+  try snap set system refresh.hold=forever || true
+}
+
+restore_snap() {
+  command -v snap >/dev/null 2>&1 || return 0
+  local prior
+  prior="$(state_field snap refresh.hold || printf '__unset__')"
+  if [ "$prior" = "__unset__" ]; then
+    log "  clearing snap refresh.hold"
+    try snap unset system refresh.hold || true
+  else
+    log "  restoring snap refresh.hold=$prior"
+    try snap set system "refresh.hold=$prior" || true
+  fi
+}
+
 # --------------------------------------------------------------- restore ----
 
 restore_units_from_state() {
@@ -266,6 +291,7 @@ cmd_lock() {
   log "snapshot written to $STATE_FILE"
   freeze_units_from_state
   freeze_apt
+  freeze_snap
   try systemctl daemon-reload || true
   [ "$FAILED" -eq 0 ] || die "$FAILED operation(s) failed"
   log ""
@@ -283,6 +309,7 @@ cmd_unlock() {
   fi
   restore_units_from_state
   restore_apt
+  restore_snap
   try systemctl daemon-reload || true
   if [ "$FAILED" -ne 0 ]; then
     die "$FAILED operation(s) failed - snapshot kept, re-run 'update-lockdown unlock'"
