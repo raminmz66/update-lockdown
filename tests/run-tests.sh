@@ -158,5 +158,39 @@ ul unlock >/dev/null 2>&1
 assert_eq "prior hold value restored" "$(cat "$UL_FAKE_SNAP_HOLD")" "2030-01-01T00:00:00Z"
 teardown
 
+echo "== Task 7: safety invariants =="
+setup
+ul lock >/dev/null 2>&1
+sum1="$(cksum < "$UL_STATE_DIR/state.tsv")"
+ul lock >/dev/null 2>&1; rc=$?
+assert_eq "a second lock exits 3" "$rc" "3"
+assert_eq "snapshot left byte-identical" "$(cksum < "$UL_STATE_DIR/state.tsv")" "$sum1"
+out="$(ul lock 2>&1)"; assert_contains "second lock explains itself" "$out" "already locked"
+teardown
+
+echo "== Task 7b: --dry-run mutates nothing =="
+setup
+ul lock --dry-run >/dev/null 2>&1; assert_eq "dry-run lock exits 0" "$?" "0"
+assert_eq "dry-run writes no state file" "$(exists "$UL_STATE_DIR/state.tsv")" "no"
+assert_eq "dry-run writes no dropin"     "$(exists "$UL_APT_CONF_DIR/99-update-lockdown")" "no"
+calls="$(cat "$UL_FAKE_LOG")"
+assert_absent "dry-run masks nothing"    "$calls" "systemctl mask"
+assert_absent "dry-run stops nothing"    "$calls" "systemctl stop"
+assert_absent "dry-run holds no snap"    "$calls" "snap set"
+out="$(ul lock --dry-run)"
+assert_contains "dry-run reports its plan" "$out" "would mask apt-daily.timer"
+teardown
+
+echo "== Task 7c: --dry-run unlock mutates nothing =="
+setup
+ul lock >/dev/null 2>&1
+sum1="$(cksum < "$UL_STATE_DIR/state.tsv")"
+: > "$UL_FAKE_LOG"
+ul unlock --dry-run >/dev/null 2>&1
+assert_eq "dry-run unlock keeps the state file" "$(exists "$UL_STATE_DIR/state.tsv")" "yes"
+assert_eq "state file unchanged" "$(cksum < "$UL_STATE_DIR/state.tsv")" "$sum1"
+assert_absent "dry-run unlock unmasks nothing" "$(cat "$UL_FAKE_LOG")" "systemctl unmask"
+teardown
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
