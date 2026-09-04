@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+#
+# update-lockdown — reversibly freeze every background update mechanism.
+#
+# The snapshot is always written to disk before anything is changed, so an
+# interrupted lock is still fully recoverable with `unlock`.
+#
+set -euo pipefail
+
+VERSION="1.0.0"
+
+UL_STATE_DIR="${UL_STATE_DIR:-/var/lib/update-lockdown}"
+UL_APT_CONF_DIR="${UL_APT_CONF_DIR:-/etc/apt/apt.conf.d}"
+STATE_FILE="$UL_STATE_DIR/state.tsv"
+BACKUP_DIR="$UL_STATE_DIR/backup"
+APT_DROPIN="99-update-lockdown"
+
+DRY_RUN=0
+QUIET=0
+FAILED=0
+
+# snapd.snap-repair.timer is deliberately absent: it is Canonical's channel
+# for repairing a broken snapd, and disabling it risks an unrecoverable snapd.
+MANAGED_UNITS=(
+  apt-daily.timer
+  apt-daily-upgrade.timer
+  apt-daily.service
+  apt-daily-upgrade.service
+  unattended-upgrades.service
+  fwupd-refresh.timer
+  packagekit-offline-update.service
+  update-notifier-download.timer
+  update-notifier-motd.timer
+  motd-news.timer
+  apt-news.service
+)
+
+log()  { [ "$QUIET" -eq 1 ] || printf '%s\n' "$*"; }
+warn() { printf 'warning: %s\n' "$*" >&2; }
+die()  { printf 'error: %s\n' "$*" >&2; exit 3; }
+
+# Run a command, tolerating failure so one bad item cannot abort a partial
+# apply and strand the system between states.
+try() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "  dry-run: $*"
+    return 0
+  fi
+  if ! "$@" >/dev/null 2>&1; then
+    warn "command failed: $*"
+    FAILED=$((FAILED + 1))
+    return 1
+  fi
+  return 0
+}
+
+need_root() {
+  [ "${UL_ALLOW_NONROOT:-0}" = "1" ] && return 0
+  [ "$(id -u)" -eq 0 ] || die "must be run as root (try: sudo update-lockdown $1)"
+}
+
+usage() {
+  cat <<HELPTEXT
+update-lockdown $VERSION — reversibly freeze background system updates
+
+USAGE
+  sudo update-lockdown lock      Snapshot the current state, then freeze updates
+  sudo update-lockdown unlock    Restore that snapshot exactly, then forget it
+       update-lockdown status    Report every managed item
+  sudo update-lockdown enforce   Re-apply the frozen state (used at boot)
+
+OPTIONS
+  --dry-run    Print every action without changing anything
+  --quiet      Suppress informational output
+  --help       Show this help
+  --version    Show the version
+
+WHILE LOCKED
+  Nothing installs on its own. Manual 'sudo apt upgrade' and 'sudo snap
+  refresh' keep working exactly as before.
+
+EXIT CODES
+  0  success; for status: locked and consistent
+  1  status: not locked
+  2  status: locked but drifted
+  3  usage error, missing privileges, or a failed operation
+HELPTEXT
+}
+
+cmd_lock()    { die "not implemented"; }
+cmd_unlock()  { die "not implemented"; }
+cmd_status()  { die "not implemented"; }
+cmd_enforce() { die "not implemented"; }
+
+main() {
+  local args=()
+  local a
+  for a in "$@"; do
+    case "$a" in
+      --dry-run)    DRY_RUN=1 ;;
+      --quiet|-q)   QUIET=1 ;;
+      --help|-h)    usage; exit 0 ;;
+      --version|-V) printf 'update-lockdown %s\n' "$VERSION"; exit 0 ;;
+      -*)           die "unknown option: $a" ;;
+      *)            args+=("$a") ;;
+    esac
+  done
+
+  if [ "${#args[@]}" -eq 0 ]; then
+    usage >&2
+    exit 3
+  fi
+
+  case "${args[0]}" in
+    lock)    cmd_lock ;;
+    unlock)  cmd_unlock ;;
+    status)  cmd_status ;;
+    enforce) cmd_enforce ;;
+    *)       die "unknown command: ${args[0]}" ;;
+  esac
+}
+
+main "$@"

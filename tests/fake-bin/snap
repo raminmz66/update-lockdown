@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Test stub. Persists refresh.hold in $UL_FAKE_SNAP_HOLD, logs every call.
+printf 'snap %s\n' "$*" >> "$UL_FAKE_LOG"
+case "${1:-} ${2:-}" in
+  "get system")
+    [ "${3:-}" = "refresh.hold" ] || exit 1
+    v="$(cat "$UL_FAKE_SNAP_HOLD" 2>/dev/null || true)"
+    if [ -z "$v" ]; then
+      echo 'error: snap "system" has no "refresh.hold" configuration option' >&2
+      exit 1
+    fi
+    echo "$v"
+    ;;
+  "set system")   printf '%s' "${3#refresh.hold=}" > "$UL_FAKE_SNAP_HOLD" ;;
+  "unset system") : > "$UL_FAKE_SNAP_HOLD" ;;
+  *) exit 0 ;;
+esac
