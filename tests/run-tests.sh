@@ -192,5 +192,45 @@ assert_eq "state file unchanged" "$(cksum < "$UL_STATE_DIR/state.tsv")" "$sum1"
 assert_absent "dry-run unlock unmasks nothing" "$(cat "$UL_FAKE_LOG")" "systemctl unmask"
 teardown
 
+echo "== Task 8: status =="
+setup
+ul status >/dev/null 2>&1; assert_eq "unlocked exits 1" "$?" "1"
+out="$(ul status)"; assert_contains "unlocked says NOT LOCKED" "$out" "NOT LOCKED"
+ul lock >/dev/null 2>&1
+# the fake systemctl now reports every managed unit as masked, as a real
+# system would after a lock
+sed -i "s/${T}enabled${T}/${T}masked${T}/; s/${T}static${T}/${T}masked${T}/" "$UL_FAKE_STATE"
+ul status >/dev/null 2>&1; assert_eq "locked and clean exits 0" "$?" "0"
+out="$(ul status)"
+assert_contains "clean status says LOCKED"   "$out" "LOCKED"
+assert_contains "clean status lists a unit"  "$out" "apt-daily.timer"
+assert_contains "clean status shows the snap hold" "$out" "refresh.hold"
+assert_absent   "clean status reports no drift" "$out" "DRIFT"
+teardown
+
+echo "== Task 8b: drift is detected =="
+setup
+ul lock >/dev/null 2>&1
+sed -i "s/${T}enabled${T}/${T}masked${T}/; s/${T}static${T}/${T}masked${T}/" "$UL_FAKE_STATE"
+sed -i "1s/${T}masked${T}/${T}enabled${T}/" "$UL_FAKE_STATE"
+ul status >/dev/null 2>&1; assert_eq "unit drift exits 2" "$?" "2"
+out="$(ul status)"; assert_contains "unit drift is named" "$out" "DRIFT"
+teardown
+
+setup
+ul lock >/dev/null 2>&1
+sed -i "s/${T}enabled${T}/${T}masked${T}/; s/${T}static${T}/${T}masked${T}/" "$UL_FAKE_STATE"
+: > "$UL_FAKE_SNAP_HOLD"
+ul status >/dev/null 2>&1; assert_eq "snap drift exits 2" "$?" "2"
+teardown
+
+setup
+ul lock >/dev/null 2>&1
+sed -i "s/${T}enabled${T}/${T}masked${T}/; s/${T}static${T}/${T}masked${T}/" "$UL_FAKE_STATE"
+rm -f "$UL_APT_CONF_DIR/99-update-lockdown"
+ul status >/dev/null 2>&1; assert_eq "apt drift exits 2" "$?" "2"
+out="$(ul status)"; assert_contains "drift suggests enforce" "$out" "enforce"
+teardown
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

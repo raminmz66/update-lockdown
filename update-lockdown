@@ -318,7 +318,57 @@ cmd_unlock() {
   log ""
   log "Updates restored to their pre-lockdown state."
 }
-cmd_status()  { die "not implemented"; }
+cmd_status() {
+  if ! is_locked; then
+    printf 'update-lockdown: NOT LOCKED\n\n'
+    printf 'Background updates are running normally.\n'
+    printf 'Run `sudo update-lockdown lock` to freeze them.\n'
+    return 1
+  fi
+
+  local drift=0 name prior active now want
+  printf 'update-lockdown: LOCKED (since %s)\n\n' "$(state_field '' locked_at || printf 'unknown')"
+  printf '%-38s %-12s %-12s %s\n' "ITEM" "NOW" "BEFORE" "RESULT"
+  printf '%-38s %-12s %-12s %s\n' "------------------------------" "----------" "----------" "------"
+
+  while IFS=$'\t' read -r name prior active; do
+    [ "$prior" = "not-found" ] && continue
+    now="$(unit_enabled_state "$name")"
+    # A unit that was already masked before lockdown is correct when masked.
+    if [ "$now" = "masked" ]; then
+      printf '%-38s %-12s %-12s %s\n' "$name" "$now" "$prior" "ok"
+    else
+      printf '%-38s %-12s %-12s %s\n' "$name" "$now" "$prior" "DRIFT"
+      drift=1
+    fi
+  done < <(state_each_unit)
+
+  now="$(snap_hold_value)"
+  want="$(state_field snap refresh.hold || printf 'unknown')"
+  if [ "$now" = "forever" ]; then
+    printf '%-38s %-12s %-12s %s\n' "snap refresh.hold" "$now" "$want" "ok"
+  elif [ "$now" = "__unset__" ] && ! command -v snap >/dev/null 2>&1; then
+    printf '%-38s %-12s %-12s %s\n' "snap refresh.hold" "n/a" "$want" "ok"
+  else
+    printf '%-38s %-12s %-12s %s\n' "snap refresh.hold" "$now" "$want" "DRIFT"
+    drift=1
+  fi
+
+  if [ -e "$UL_APT_CONF_DIR/$APT_DROPIN" ]; then
+    printf '%-38s %-12s %-12s %s\n' "apt $APT_DROPIN" "present" "$(state_field aptconf "$APT_DROPIN" || true)" "ok"
+  else
+    printf '%-38s %-12s %-12s %s\n' "apt $APT_DROPIN" "absent" "$(state_field aptconf "$APT_DROPIN" || true)" "DRIFT"
+    drift=1
+  fi
+
+  if [ "$drift" -eq 1 ]; then
+    printf '\nDrift detected: something has escaped the lockdown.\n'
+    printf 'Run `sudo update-lockdown enforce` to re-apply it.\n'
+    return 2
+  fi
+  printf '\nAll managed items are frozen. Manual apt/snap commands still work.\n'
+  return 0
+}
 cmd_enforce() { die "not implemented"; }
 
 main() {
