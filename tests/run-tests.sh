@@ -80,5 +80,38 @@ assert_absent   "never touches snap-repair" "$calls" "snap-repair"
 assert_contains "reloads systemd"           "$calls" "systemctl daemon-reload"
 teardown
 
+echo "== Task 4: restore units =="
+setup
+ul lock >/dev/null 2>&1
+: > "$UL_FAKE_LOG"
+ul unlock >/dev/null 2>&1
+calls="$(cat "$UL_FAKE_LOG")"
+assert_contains "unmasks an enabled timer"  "$calls" "systemctl unmask apt-daily.timer"
+assert_contains "re-enables it"             "$calls" "systemctl enable apt-daily.timer"
+assert_contains "restarts an active timer"  "$calls" "systemctl start apt-daily.timer"
+assert_contains "unmasks a static unit"     "$calls" "systemctl unmask apt-news.service"
+assert_absent   "never enables a static unit" "$calls" "systemctl enable apt-news.service"
+assert_absent   "never starts an inactive unit" "$calls" "systemctl start apt-news.service"
+assert_eq "state file removed after unlock" "$(exists "$UL_STATE_DIR/state.tsv")" "no"
+out="$(ul unlock)"
+assert_contains "unlock when unlocked is benign" "$out" "not locked"
+ul unlock >/dev/null 2>&1; assert_eq "unlock when unlocked exits 0" "$?" "0"
+teardown
+
+echo "== Task 4b: masked and missing units round-trip =="
+setup
+printf 'fwupd-refresh.timer\tmasked\tinactive\n' >> "$UL_FAKE_STATE"
+sed -i '/^fwupd-refresh.timer\tenabled/d' "$UL_FAKE_STATE"
+sed -i '/^motd-news.timer\t/d' "$UL_FAKE_STATE"
+ul lock >/dev/null 2>&1
+st="$(cat "$UL_STATE_DIR/state.tsv")"
+assert_contains "absent unit recorded not-found" "$st" "unit${T}motd-news.timer${T}not-found"
+: > "$UL_FAKE_LOG"
+ul unlock >/dev/null 2>&1
+calls="$(cat "$UL_FAKE_LOG")"
+assert_absent "pre-masked unit stays masked"  "$calls" "systemctl unmask fwupd-refresh.timer"
+assert_absent "absent unit is skipped"        "$calls" "systemctl unmask motd-news.timer"
+teardown
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

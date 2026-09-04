@@ -180,6 +180,28 @@ freeze_units_from_state() {
   done < <(state_each_unit)
 }
 
+# --------------------------------------------------------------- restore ----
+
+restore_units_from_state() {
+  local name prior active
+  while IFS=$'\t' read -r name prior active; do
+    case "$prior" in
+      not-found) continue ;;
+      masked)    log "  $name was masked before lockdown - leaving it masked"; continue ;;
+    esac
+    log "  restoring $name to $prior/$active"
+    try systemctl unmask "$name" || true
+    case "$prior" in
+      enabled)  try systemctl enable "$name" || true ;;
+      disabled) try systemctl disable "$name" || true ;;
+      # static / indirect / enabled-runtime / generated: unmask is the whole job
+    esac
+    if [ "$active" = "active" ]; then
+      try systemctl start "$name" || true
+    fi
+  done < <(state_each_unit)
+}
+
 # ------------------------------------------------------------- commands ----
 
 cmd_lock() {
@@ -205,7 +227,25 @@ cmd_lock() {
   log ""
   log "Updates are locked down. Manual 'apt upgrade' and 'snap refresh' still work."
 }
-cmd_unlock()  { die "not implemented"; }
+cmd_unlock() {
+  need_root unlock
+  if ! is_locked; then
+    log "not locked - nothing to restore."
+    return 0
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "dry-run: would restore every item recorded in $STATE_FILE"
+    return 0
+  fi
+  restore_units_from_state
+  try systemctl daemon-reload || true
+  if [ "$FAILED" -ne 0 ]; then
+    die "$FAILED operation(s) failed - snapshot kept, re-run 'update-lockdown unlock'"
+  fi
+  rm -f "$STATE_FILE"
+  log ""
+  log "Updates restored to their pre-lockdown state."
+}
 cmd_status()  { die "not implemented"; }
 cmd_enforce() { die "not implemented"; }
 
