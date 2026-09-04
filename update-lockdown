@@ -87,7 +87,91 @@ EXIT CODES
 HELPTEXT
 }
 
-cmd_lock()    { die "not implemented"; }
+# ---------------------------------------------------------------- state ----
+
+# systemctl exits non-zero for disabled/masked units but still prints the
+# word, so failure is tolerated and empty output means the unit is absent.
+unit_enabled_state() {
+  local out
+  out="$(systemctl is-enabled "$1" 2>/dev/null || true)"
+  out="${out%%$'\n'*}"
+  [ -n "$out" ] || out="not-found"
+  printf '%s' "$out"
+}
+
+unit_active_state() {
+  local out
+  out="$(systemctl is-active "$1" 2>/dev/null || true)"
+  out="${out%%$'\n'*}"
+  if [ "$out" = "active" ]; then printf 'active'; else printf 'inactive'; fi
+}
+
+snap_hold_value() {
+  local v
+  command -v snap >/dev/null 2>&1 || { printf '__unset__'; return 0; }
+  v="$(snap get system refresh.hold 2>/dev/null || true)"
+  v="${v%%$'\n'*}"
+  if [ -n "$v" ]; then printf '%s' "$v"; else printf '__unset__'; fi
+}
+
+is_locked() { [ -f "$STATE_FILE" ]; }
+
+# Written atomically, and always before the first mutation.
+state_write() {
+  local tmp u
+  mkdir -p "$UL_STATE_DIR"
+  chmod 700 "$UL_STATE_DIR"
+  tmp="$STATE_FILE.tmp.$$"
+  {
+    printf '#update-lockdown state - do not edit by hand\n'
+    printf 'schema\t1\n'
+    printf 'locked_at\t%s\n' "$(date -Is)"
+    for u in "${MANAGED_UNITS[@]}"; do
+      printf 'unit\t%s\t%s\t%s\n' "$u" "$(unit_enabled_state "$u")" "$(unit_active_state "$u")"
+    done
+    if [ -e "$UL_APT_CONF_DIR/$APT_DROPIN" ]; then
+      printf 'aptconf\t%s\tpresent\n' "$APT_DROPIN"
+    else
+      printf 'aptconf\t%s\tabsent\n' "$APT_DROPIN"
+    fi
+    printf 'snap\trefresh.hold\t%s\n' "$(snap_hold_value)"
+  } > "$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$STATE_FILE"
+}
+
+state_each_unit() {
+  local kind a b c
+  while IFS=$'\t' read -r kind a b c; do
+    [ "$kind" = "unit" ] || continue
+    printf '%s\t%s\t%s\n' "$a" "$b" "$c"
+  done < "$STATE_FILE"
+}
+
+# state_field <kind> <key>; an empty <kind> matches a bare metadata line.
+state_field() {
+  local kind a b c
+  while IFS=$'\t' read -r kind a b c; do
+    if [ -z "$1" ] && [ "$kind" = "$2" ]; then printf '%s' "$a"; return 0; fi
+    if [ "$kind" = "$1" ] && [ "$a" = "$2" ]; then printf '%s' "$b"; return 0; fi
+  done < "$STATE_FILE"
+  return 1
+}
+
+# ------------------------------------------------------------- commands ----
+
+cmd_lock() {
+  need_root lock
+  if is_locked; then
+    die "already locked - run 'update-lockdown unlock' first (snapshot: $STATE_FILE)"
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "dry-run: would snapshot to $STATE_FILE, then freeze"
+    return 0
+  fi
+  state_write
+  log "snapshot written to $STATE_FILE"
+}
 cmd_unlock()  { die "not implemented"; }
 cmd_status()  { die "not implemented"; }
 cmd_enforce() { die "not implemented"; }

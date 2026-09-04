@@ -53,5 +53,19 @@ ul bogus >/dev/null 2>&1; assert_eq "unknown verb exits 3" "$?" "3"
 ul >/dev/null 2>&1;       assert_eq "no verb exits 3"      "$?" "3"
 teardown
 
+echo "== Task 2: state primitives =="
+setup
+ul lock >/dev/null 2>&1 || true
+assert_eq "state file created" "$(exists "$UL_STATE_DIR/state.tsv")" "yes"
+st="$(cat "$UL_STATE_DIR/state.tsv" 2>/dev/null || true)"
+assert_contains "schema recorded"            "$st" "schema${T}1"
+assert_contains "enabled timer snapshotted"  "$st" "unit${T}apt-daily.timer${T}enabled${T}active"
+assert_contains "static service snapshotted" "$st" "unit${T}apt-news.service${T}static${T}inactive"
+assert_contains "apt dropin recorded absent" "$st" "aptconf${T}99-update-lockdown${T}absent"
+assert_contains "snap hold recorded unset"   "$st" "snap${T}refresh.hold${T}__unset__"
+assert_eq "state file is mode 0600" "$(stat -c '%a' "$UL_STATE_DIR/state.tsv" 2>/dev/null)" "600"
+assert_eq "state dir is mode 0700"  "$(stat -c '%a' "$UL_STATE_DIR" 2>/dev/null)" "700"
+teardown
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
