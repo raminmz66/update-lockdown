@@ -158,6 +158,28 @@ state_field() {
   return 1
 }
 
+# ---------------------------------------------------------------- freeze ----
+
+# Masking rather than merely disabling is deliberate: reinstalling a package
+# re-enables its own timer, and a mask survives that.
+freeze_units_from_state() {
+  local name prior active
+  while IFS=$'\t' read -r name prior active; do
+    case "$prior" in
+      not-found) continue ;;
+      masked)    log "  $name was already masked - leaving it"; continue ;;
+    esac
+    log "  freezing $name (was $prior/$active)"
+    try systemctl stop "$name" || true
+    # `systemctl disable` errors on a static unit, so only call it when the
+    # unit genuinely carried an [Install] section.
+    if [ "$prior" = "enabled" ]; then
+      try systemctl disable "$name" || true
+    fi
+    try systemctl mask "$name" || true
+  done < <(state_each_unit)
+}
+
 # ------------------------------------------------------------- commands ----
 
 cmd_lock() {
@@ -166,11 +188,22 @@ cmd_lock() {
     die "already locked - run 'update-lockdown unlock' first (snapshot: $STATE_FILE)"
   fi
   if [ "$DRY_RUN" -eq 1 ]; then
-    log "dry-run: would snapshot to $STATE_FILE, then freeze"
+    log "dry-run: would snapshot to $STATE_FILE, then freeze:"
+    local u
+    for u in "${MANAGED_UNITS[@]}"; do
+      log "  dry-run: would mask $u (currently $(unit_enabled_state "$u"))"
+    done
+    log "  dry-run: would write $UL_APT_CONF_DIR/$APT_DROPIN"
+    log "  dry-run: would set snap refresh.hold=forever"
     return 0
   fi
   state_write
   log "snapshot written to $STATE_FILE"
+  freeze_units_from_state
+  try systemctl daemon-reload || true
+  [ "$FAILED" -eq 0 ] || die "$FAILED operation(s) failed"
+  log ""
+  log "Updates are locked down. Manual 'apt upgrade' and 'snap refresh' still work."
 }
 cmd_unlock()  { die "not implemented"; }
 cmd_status()  { die "not implemented"; }

@@ -67,5 +67,18 @@ assert_eq "state file is mode 0600" "$(stat -c '%a' "$UL_STATE_DIR/state.tsv" 2>
 assert_eq "state dir is mode 0700"  "$(stat -c '%a' "$UL_STATE_DIR" 2>/dev/null)" "700"
 teardown
 
+echo "== Task 3: freeze units =="
+setup
+ul lock >/dev/null 2>&1
+calls="$(cat "$UL_FAKE_LOG")"
+assert_contains "masks an enabled timer"    "$calls" "systemctl mask apt-daily.timer"
+assert_contains "stops an enabled timer"    "$calls" "systemctl stop apt-daily.timer"
+assert_contains "disables an enabled unit"  "$calls" "systemctl disable unattended-upgrades.service"
+assert_contains "masks a static unit"       "$calls" "systemctl mask apt-news.service"
+assert_absent   "never disables a static unit" "$calls" "systemctl disable apt-news.service"
+assert_absent   "never touches snap-repair" "$calls" "snap-repair"
+assert_contains "reloads systemd"           "$calls" "systemctl daemon-reload"
+teardown
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
